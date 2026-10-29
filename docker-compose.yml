@@ -7,23 +7,23 @@ services:
     volumes:
       - ./backend/bget.db:/app/bget.db
       - ./backend/logs:/app/logs
-      - /mnt/raid0/esports:/mnt/raid0/esports
+      - ${ESPORTS_DIR}:/mnt/raid0/esports
     environment:
-      - SECRET_KEY=ab0fcea65b768d7f7c958313ed0dd95f8c579d251266183e091069d16702a7d0
+      - SECRET_KEY=${SECRET_KEY}
       - ALGORITHM=HS256
       - ACCESS_TOKEN_EXPIRE_HOURS=24
       - DATABASE_URL=sqlite:///./bget.db
-      - RIOT_API_KEY=RGAPI-45a928eb-3c20-41fa-9f82-0395b3c7d924
-      - HENRIK_API_KEY=HDEV-a23aa305-d8c8-4780-ac89-49935b660e26
+      - RIOT_API_KEY=${RIOT_API_KEY}
+      - HENRIK_API_KEY=${HENRIK_API_KEY}
       - CORS_ORIGINS=*
-      - ENVIRONMENT=production
+      - ENVIRONMENT=${ENVIRONMENT:-production}
     restart: unless-stopped
 
   frontend:
     image: playsmartbuas/bg-app-frontend
     container_name: app-frontend
     ports:
-      - "80:80"
+      - "${FRONTEND_PORT:-80}:80"
     depends_on:
       - backend
     restart: unless-stopped
@@ -32,7 +32,7 @@ services:
     image: playsmartbuas/bg-app-pipeline
     container_name: app-pipeline
     volumes:
-      - /mnt/raid0/esports:/mnt/raid0/esports
+      - ${ESPORTS_DIR}:/mnt/raid0/esports
     environment:
       - TZ=Europe/Amsterdam
     restart: unless-stopped
@@ -43,10 +43,10 @@ services:
     ports:
       - "8001:8001"
     volumes:
-      - /mnt/raid0/esports:/mnt/raid0/esports
+      - ${ESPORTS_DIR}:/mnt/raid0/esports
     environment:
       - TZ=Europe/Amsterdam
-      - GPU_PC_URL=http://10.4.28.236:8000
+      - GPU_PC_URL=${GPU_PC_URL}
       - WATCH_FOLDER=/mnt/raid0/esports/sftp_data/merged
       - VIDEO_FOLDER=/mnt/raid0/esports/sftp_data/video
       - RESULTS_FOLDER=/mnt/raid0/esports/sftp_data/results
@@ -58,18 +58,47 @@ services:
     ports:
       - "2422:22"
     volumes:
-      - /mnt/raid0/esports/sftp_data:/home/localhost/data
+      - ${ESPORTS_DIR}/sftp_data:/home/localhost/data
     environment:
-      - SFTP_USERS=localhost:yourpassword:1234
-    restart: unless-stopped
+      - SFTP_USERS=localhost:${SFTP_PASSWORD}:1234
     command: >
-      /bin/sh -c "mkdir -p /home/localhost/data/emotion &&
-      mkdir -p /home/localhost/data/video &&
-      mkdir -p /home/localhost/data/input &&
-      mkdir -p /home/localhost/data/merged &&
-      mkdir -p /home/localhost/data/gaze &&
-      mkdir -p /home/localhost/data/eda &&
-      mkdir -p /home/localhost/data/audio &&
-      chown -R 1234:100 /home/localhost/data &&
-      chmod -R 775 /home/localhost/data &&
-      /usr/sbin/sshd -D"
+      /bin/sh -c "mkdir -p /home/localhost/data/emotion /home/localhost/data/video
+      /home/localhost/data/input /home/localhost/data/merged /home/localhost/data/gaze
+      /home/localhost/data/eda /home/localhost/data/audio;
+      chown -R 1234:100 /home/localhost/data || true;
+      chmod -R 775 /home/localhost/data || true;
+      exec /usr/sbin/sshd -D"
+    restart: unless-stopped
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-latest}
+    container_name: app-seaweedfs
+    command: >
+      server -dir=/data -filer -s3
+      -ip=seaweedfs -ip.bind=0.0.0.0
+      -s3.config=/etc/seaweedfs/s3.json
+      -master.volumeSizeLimitMB=${SEAWEED_VOLUME_MB:-1024}
+    ports:
+      - "127.0.0.1:9333:9333"
+      - "127.0.0.1:8888:8888"
+      - "8333:8333"
+    volumes:
+      - ${SEAWEEDFS_DIR}:/data
+      - ./seaweedfs/config/s3.json:/etc/seaweedfs/s3.json:ro
+    restart: unless-stopped
+
+  seaweed-sftp:
+    image: chrislusf/seaweedfs:${SEAWEEDFS_VERSION:-latest}
+    container_name: app-seaweed-sftp
+    command: >
+      sftp -filer=seaweedfs:8888 -port=2022
+      -userStoreFile=/etc/seaweedfs/users.json
+      -sshPrivateKey=/etc/seaweedfs/ssh_host_key
+    ports:
+      - "2022:2022"
+    volumes:
+      - ./seaweedfs/config/users.json:/etc/seaweedfs/users.json:ro
+      - ./seaweedfs/config/ssh_host_key:/etc/seaweedfs/ssh_host_key:ro
+    depends_on:
+      - seaweedfs
+    restart: unless-stopped
